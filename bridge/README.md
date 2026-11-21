@@ -11,8 +11,11 @@ Mac의 Messages.app을 서버의 Hermes Agent와 연결하는 작은 HTTP 브리
 
 ## 1. 빌드와 설치 (내 macOS 계정에서)
 
+Xcode 또는 Command Line Tools가 설치되어 있어야 해요(Swift 6).
+
 ```bash
-cd ~/iMessage/bridge
+git clone https://github.com/luvxxxu/Talaria.git
+cd Talaria/bridge
 scripts/install.sh            # 결과물: /Users/Shared/talaria/bin/talaria-bridge
 ```
 

@@ -9,10 +9,11 @@ Talaria 브리지(Mac)와 서버의 Hermes Agent를 연결하는 플랫폼 플�
 
 ## 서버에 설치하기
 
-1. **플러그인 폴더를 서버로 복사해요.** Mac에서 실행해요.
+1. **GitHub에서 플러그인을 설치해요.** 서버에서 실행해요. 저장소 안의 `hermes-plugin/talaria` 폴더만 `~/.hermes/plugins/talaria`에 설치돼요.
    ```bash
-   scp -r ~/iMessage/hermes-plugin/talaria <서버>:~/.hermes/plugins/talaria
+   hermes plugins install luvxxxu/Talaria/hermes-plugin/talaria
    ```
+   나중에 업데이트할 때는 `hermes plugins update talaria`를 실행하고 gateway를 다시 시작해요.
 2. **서버의 `~/.hermes/.env`에 설정을 추가해요.**
    ```bash
    TALARIA_BRIDGE_URL=http://<Mac의 Tailscale IP>:8790
