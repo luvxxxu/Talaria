@@ -1,0 +1,39 @@
+name: talaria
+label: iMessage (Talaria)
+kind: platform
+version: 0.1.0
+description: >
+  iMessage for Hermes through a self-hosted Talaria bridge running on a Mac
+  that is signed in to Messages. Long-polls the bridge for incoming messages
+  and posts replies back to it. No extra Python packages (uses httpx from Hermes).
+author: Talaria
+requires_env:
+  - name: TALARIA_BRIDGE_URL
+    description: "Talaria bridge URL on the Mac, over Tailscale (e.g. http://100.64.0.5:8790)"
+    prompt: "Bridge URL"
+    password: false
+  - name: TALARIA_BRIDGE_TOKEN
+    description: "TALARIA_TOKEN from the bridge's bridge.env"
+    prompt: "Bridge token"
+    password: true
+optional_env:
+  - name: TALARIA_ALLOWED_USERS
+    description: "Comma-separated iMessage addresses allowed to talk to the bot, exactly as the bridge's watch prints them (e.g. +821012345678, me@icloud.com)"
+    prompt: "Allowed iMessage addresses"
+    password: false
+  - name: TALARIA_ALLOW_ALL_USERS
+    description: "Skip the allowlist (not recommended; the bridge still filters senders)"
+    prompt: "Allow all users? (true/false)"
+    password: false
+  - name: TALARIA_HOME_CHANNEL
+    description: "Where cron jobs and notifications go: your address or 1:1 chat GUID (e.g. any;-;+821012345678)"
+    prompt: "Home channel"
+    password: false
+  - name: TALARIA_HOME_CHANNEL_NAME
+    description: "Display name for the home channel"
+    prompt: "Home channel name"
+    password: false
+  - name: TALARIA_MAX_AGE_SECONDS
+    description: "Ignore messages older than this when catching up after downtime (default 600, 0 = no limit)"
+    prompt: "Max message age (seconds)"
+    password: false

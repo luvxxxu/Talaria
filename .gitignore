@@ -1,0 +1,13 @@
+.DS_Store
+
+# Swift build output
+.build/
+.swiftpm/
+
+# Python
+__pycache__/
+*.pyc
+
+# Real settings hold tokens: keep them out of git (bridge.env.example is fine)
+*.env
+.env
