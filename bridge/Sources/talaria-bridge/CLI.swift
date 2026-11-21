@@ -13,6 +13,7 @@ enum CLI {
                                      send a test message to an allowed handle or 1:1 chat
           typing --to H [--seconds N]
                                      show "typing…" to an allowed handle for N seconds (TALARIA_TYPING=ui test)
+          typing --inspect [--to H]  show what the typing driver sees in the Messages window (types nothing)
           serve                      run the HTTP bridge for Hermes
           gen-token                  print a random token for TALARIA_TOKEN
 
@@ -123,9 +124,11 @@ enum CLI {
         var args = arguments[...]
         var to: String?
         var seconds = 8.0
+        var inspectOnly = false
         while let arg = args.popFirst() {
             switch arg {
             case "--to": to = args.popFirst()
+            case "--inspect": inspectOnly = true
             case "--seconds":
                 guard let value = args.popFirst().flatMap(Double.init), value > 0 else {
                     return fail("--seconds needs a positive number")
@@ -134,7 +137,16 @@ enum CLI {
             default: return fail("unexpected argument \(arg)")
             }
         }
-        guard let handle = to else { return fail("usage: typing --to HANDLE [--seconds N]") }
+        if inspectOnly {
+            // Read-only: reports what the driver sees, types nothing.
+            guard await MainActor.run(body: { UITypingDriver.accessibilityTrusted(prompt: true) }) else {
+                printError("Accessibility is not granted. \(accessibilityHint)")
+                return 1
+            }
+            print(await UITypingDriver().inspect(handle: to))
+            return 0
+        }
+        guard let handle = to else { return fail("usage: typing --to HANDLE [--seconds N] | typing --inspect [--to HANDLE]") }
         do {
             try config.requireAllowlist()
         } catch {
