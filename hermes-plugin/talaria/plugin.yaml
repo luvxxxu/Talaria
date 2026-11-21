@@ -1,7 +1,7 @@
 name: talaria
 label: iMessage (Talaria)
 kind: platform
-version: 0.1.0
+version: 0.2.0
 description: >
   iMessage for Hermes through a self-hosted Talaria bridge running on a Mac
   that is signed in to Messages. Long-polls the bridge for incoming messages

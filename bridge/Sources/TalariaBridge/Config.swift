@@ -18,6 +18,7 @@ public struct BridgeConfig: Sendable {
     public var statePath = "~/Library/Application Support/Talaria/state.json"
     public var pollInterval = 1.0
     public var maxAge = 600.0
+    public var typing = TypingMode.off
     public var envFile: String?
 
     public init() {}
@@ -66,6 +67,9 @@ public struct BridgeConfig: Sendable {
         if let raw = values["TALARIA_STATE_PATH"] { config.statePath = raw }
         if let raw = values["TALARIA_POLL_INTERVAL"] { config.pollInterval = try parse(raw, "TALARIA_POLL_INTERVAL", Double.init) }
         if let raw = values["TALARIA_MAX_AGE_SECONDS"] { config.maxAge = try parse(raw, "TALARIA_MAX_AGE_SECONDS", Double.init) }
+        if let raw = values["TALARIA_TYPING"] {
+            config.typing = try parse(raw.lowercased(), "TALARIA_TYPING (off or ui)") { TypingMode(rawValue: $0) }
+        }
         guard config.pollInterval > 0 else { throw ConfigError("TALARIA_POLL_INTERVAL must be positive") }
         return config
     }

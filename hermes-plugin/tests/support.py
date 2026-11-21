@@ -44,6 +44,8 @@ class FakeBridge:
         self.send_status = 200
         self.fail_events = 0  # number of /events calls that raise ConnectError
         self.connect_error = False
+        self.typing_mode = "off"  # what /health reports; "missing" = a bridge older than /typing
+        self.typing_requests: list[dict] = []
 
     def push(self, *events: dict) -> None:
         self.pending.extend(events)
@@ -61,7 +63,15 @@ class FakeBridge:
             return httpx.Response(401, json={"error": "unauthorized", "reason": "token does not match TALARIA_TOKEN"})
         path = request.url.path
         if path == "/health":
-            return httpx.Response(self.health_status, json={"ok": True, "cursor": self.cursor, "version": "test"})
+            health = {"ok": True, "cursor": self.cursor, "version": "test"}
+            if self.typing_mode != "missing":
+                health["typing"] = self.typing_mode
+            return httpx.Response(self.health_status, json=health)
+        if path == "/typing":
+            if self.typing_mode == "missing":
+                return httpx.Response(404, json={"error": "not found"})
+            self.typing_requests.append(json.loads(request.content))
+            return httpx.Response(200, json={"ok": True, "enabled": self.typing_mode != "off"})
         if path == "/events":
             self.event_requests.append(dict(request.url.params))
             if self.fail_events:

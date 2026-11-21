@@ -40,8 +40,15 @@ final class ConfigTests: XCTestCase {
         XCTAssertThrowsError(try config.requireAllowlist())
     }
 
+    func testTypingMode() throws {
+        try write("TALARIA_TYPING=UI\n")
+        XCTAssertEqual(try BridgeConfig.load(envFile: path, environment: [:]).typing, .ui)
+        try write("\n")
+        XCTAssertEqual(try BridgeConfig.load(envFile: path, environment: [:]).typing, .off)
+    }
+
     func testBadValues() throws {
-        for bad in ["TALARIA_PORT=abc\n", "TALARIA_PORT=70000\n", "TALARIA_POLL_INTERVAL=0\n", "JUSTAWORD\n"] {
+        for bad in ["TALARIA_PORT=abc\n", "TALARIA_PORT=70000\n", "TALARIA_POLL_INTERVAL=0\n", "TALARIA_TYPING=yes\n", "JUSTAWORD\n"] {
             try write(bad)
             XCTAssertThrowsError(try BridgeConfig.load(envFile: path, environment: [:]), bad)
         }

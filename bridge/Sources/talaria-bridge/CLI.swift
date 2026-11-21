@@ -11,6 +11,8 @@ enum CLI {
           watch                      print incoming messages as they arrive
           send (--to H | --chat G) TEXT
                                      send a test message to an allowed handle or 1:1 chat
+          typing --to H [--seconds N]
+                                     show "typing…" to an allowed handle for N seconds (TALARIA_TYPING=ui test)
           serve                      run the HTTP bridge for Hermes
           gen-token                  print a random token for TALARIA_TOKEN
 
@@ -56,6 +58,7 @@ enum CLI {
             case "check": return await check(config)
             case "watch": return await watch(config)
             case "send": return await send(config, Array(args))
+            case "typing": return await typingTest(config, Array(args))
             case "serve": return try await serve(config)
             default: return fail("unknown command \(command)")
             }
@@ -97,7 +100,66 @@ enum CLI {
             ok = false
             print("Messages         : FAILED\n  \(error)\n  \(automationHint)")
         }
+
+        if config.typing == .ui {
+            if await MainActor.run(body: { UITypingDriver.accessibilityTrusted(prompt: true) }) {
+                print("typing (ui)      : Accessibility granted")
+            } else {
+                ok = false
+                print("typing (ui)      : Accessibility NOT granted\n  \(accessibilityHint)")
+            }
+        } else {
+            print("typing           : off")
+        }
         return ok ? 0 : 1
+    }
+
+    static let accessibilityHint = """
+        Allow the app running this (Terminal, or talaria-bridge under launchd) in System Settings > \
+        Privacy & Security > Accessibility, then restart it.
+        """
+
+    static func typingTest(_ config: BridgeConfig, _ arguments: [String]) async -> Int32 {
+        var args = arguments[...]
+        var to: String?
+        var seconds = 8.0
+        while let arg = args.popFirst() {
+            switch arg {
+            case "--to": to = args.popFirst()
+            case "--seconds":
+                guard let value = args.popFirst().flatMap(Double.init), value > 0 else {
+                    return fail("--seconds needs a positive number")
+                }
+                seconds = value
+            default: return fail("unexpected argument \(arg)")
+            }
+        }
+        guard let handle = to else { return fail("usage: typing --to HANDLE [--seconds N]") }
+        do {
+            try config.requireAllowlist()
+        } catch {
+            printError("config error: \(error)")
+            return 2
+        }
+        guard AccessPolicy(config.allowedHandles).isAllowed(handle) else {
+            printError("\(handle) is not in TALARIA_ALLOWED_HANDLES.")
+            return 1
+        }
+        guard await MainActor.run(body: { UITypingDriver.accessibilityTrusted(prompt: true) }) else {
+            printError("Accessibility is not granted. \(accessibilityHint)")
+            return 1
+        }
+        let driver = UITypingDriver()
+        print("Opening the chat with \(handle) in Messages and typing a placeholder...")
+        guard await driver.begin(handle: handle) else {
+            printError("Typing did not start; the warning above says why.")
+            return 1
+        }
+        print("The iPhone should show \"typing…\" for \(Int(seconds)) seconds.")
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        await driver.end()
+        print("Cleared.")
+        return 0
     }
 
     static func watch(_ config: BridgeConfig) async -> Int32 {
@@ -203,9 +265,16 @@ enum CLI {
         let pump = MessagePump(db: db, policy: policy, cursor: cursor, maxAge: config.maxAge)
         let hub = EventHub()
         let watcher = Watcher(pump: pump, hub: hub, store: store, pollInterval: config.pollInterval)
+        var typing: TypingController?
+        if config.typing == .ui {
+            if !(await MainActor.run(body: { UITypingDriver.accessibilityTrusted(prompt: true) })) {
+                Log.warning("TALARIA_TYPING=ui: Accessibility is not granted, so typing will not show. \(accessibilityHint)")
+            }
+            typing = TypingController(driver: UITypingDriver())
+        }
         let lookup = ChatLookup(path: config.dbPath)
         let api = BridgeAPI(hub: hub, sender: MessagesSender(), policy: policy, token: config.token,
-                            chatLookup: { lookup.directChatGUID(for: $0) })
+                            chatLookup: { lookup.directChatGUID(for: $0) }, typing: typing)
         let server = try HTTPServer(host: config.host, port: config.port) { request in
             await api.handle(request)
         }
@@ -218,11 +287,14 @@ enum CLI {
             return 1
         }
         let watcherTask = Task { await watcher.run() }
-        Log.info("Talaria bridge \(bridgeVersion) listening on http://\(config.host):\(port) (\(policy.count) allowed handle(s))")
+        Log.info("Talaria bridge \(bridgeVersion) listening on http://\(config.host):\(port) "
+                 + "(\(policy.count) allowed handle(s), typing \(config.typing.rawValue))")
 
         await waitForTerminationSignal()
         watcherTask.cancel()
         server.stop()
+        await typing?.clearNow()
+        await typing?.stop()
         Log.info("stopped")
         return 0
     }

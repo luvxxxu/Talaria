@@ -1,6 +1,6 @@
 import Foundation
 
-public let bridgeVersion = "0.2.0"
+public let bridgeVersion = "0.3.0"
 
 /// Minimal stderr logger. stderr is unbuffered, so lines show up immediately in
 /// launchd's log files.

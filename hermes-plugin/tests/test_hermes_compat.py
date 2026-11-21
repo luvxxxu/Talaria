@@ -72,10 +72,12 @@ class HermesCompatTests(unittest.TestCase):
     def test_adapter_base_class(self):
         base = parse("gateway/platforms/base.py")
         adapter = methods(find_class(base, "BasePlatformAdapter"))
-        for name in ("handle_message", "build_source", "format_message", "send_typing",
-                     "_mark_connected", "_mark_disconnected", "_set_fatal_error",
+        for name in ("handle_message", "build_source", "format_message", "send_typing", "stop_typing",
+                     "_keep_typing", "_mark_connected", "_mark_disconnected", "_set_fatal_error",
                      "_acquire_platform_lock", "_release_platform_lock"):
             self.assertIn(name, adapter)
+        self.assertLessEqual({"chat_id", "metadata"}, params(adapter["send_typing"]))
+        self.assertIn("chat_id", params(adapter["stop_typing"]))
         self.assertLessEqual({"chat_id", "chat_name", "chat_type", "user_id", "user_name"},
                              params(adapter["build_source"]))
         self.assertLessEqual({"code", "message", "retryable"}, params(adapter["_set_fatal_error"]))

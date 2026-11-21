@@ -211,6 +211,54 @@ class OutboundTests(AdapterTestCase):
         self.assertEqual(await self.adapter.get_chat_info(CHAT), {"name": ME, "type": "dm", "chat_id": CHAT})
 
 
+class TypingTests(AdapterTestCase):
+    async def test_off_by_default_sends_nothing(self):
+        await self.adapter.connect()
+        await self.adapter.send_typing(CHAT)
+        await self.adapter.stop_typing(CHAT)
+        self.assertEqual(self.bridge.typing_requests, [])
+
+    async def test_on_when_the_bridge_reports_it(self):
+        self.bridge.typing_mode = "ui"
+        await self.adapter.connect()
+        await self.adapter.send_typing(CHAT)
+        await self.adapter.send_typing(ME)
+        await self.adapter.stop_typing(CHAT, metadata={"x": 1})
+        self.assertEqual(self.bridge.typing_requests, [
+            {"chat_guid": CHAT, "active": True},
+            {"to": ME, "active": True},
+            {"chat_guid": CHAT, "active": False},
+        ])
+
+    async def test_turns_itself_off_when_the_bridge_says_so(self):
+        self.bridge.typing_mode = "ui"
+        await self.adapter.connect()
+        self.bridge.typing_mode = "off"  # bridge restarted without TALARIA_TYPING
+        await self.adapter.send_typing(CHAT)
+        await self.adapter.send_typing(CHAT)
+        self.assertEqual(len(self.bridge.typing_requests), 1)
+
+    async def test_older_bridge_without_typing(self):
+        self.bridge.typing_mode = "missing"
+        await self.adapter.connect()
+        self.assertFalse(self.adapter._typing_enabled)
+        self.adapter._typing_enabled = True  # even if forced on, a 404 turns it off
+        await self.adapter.send_typing(CHAT)
+        self.assertFalse(self.adapter._typing_enabled)
+
+    async def test_picks_up_typing_after_the_bridge_restarts(self):
+        await self.adapter.connect()
+        self.bridge.fail_events = 2
+        self.bridge.typing_mode = "ui"
+        await wait_for(lambda: self.adapter._typing_enabled)
+
+    async def test_typing_errors_are_harmless(self):
+        self.bridge.typing_mode = "ui"
+        await self.adapter.connect()
+        self.bridge.connect_error = True
+        await self.adapter.send_typing(CHAT)  # must not raise
+
+
 class StandaloneSendTests(AdapterTestCase):
     async def test_sends_without_a_running_adapter(self):
         result = await talaria._standalone_send(PlatformConfig(), CHAT, "cron says hi")

@@ -73,13 +73,38 @@ scripts/install.sh            # 결과물: /Users/Shared/talaria/bin/talaria-bri
      ```
      401이 나오면 응답의 `reason`과 브리지 로그에 원인이 나와요. 토큰이 비었는지, 틀렸는지, 헤더가 없는지 구분해서 알려줘요.
 
+## 입력 중 표시 (선택, 실험적)
+
+Hermes가 답을 만드는 동안 아이폰에 `…` 입력 중 표시가 뜨게 할 수 있어요. 기본값은 꺼져 있어요.
+
+macOS에는 입력 중 표시를 띄우는 공개 API가 없어요. 그래서 브리지가 Messages에서 그 대화를 열고, 입력창에 `.` 한 글자를 대신 입력해요. 그러면 Messages가 진짜 입력 중 표시를 보내요. 답장을 보내기 직전에 그 글자를 지워요.
+
+- **켜기:** `bridge.env`에 `TALARIA_TYPING=ui`를 넣고 `serve`를 다시 시작해요. 서버의 Hermes 플러그인은 브리지의 `/health`를 보고 자동으로 따라와요.
+- **권한:** 실행하는 앱(터미널, 또는 launchd로 띄운 `talaria-bridge`)에 시스템 설정 → 개인정보 보호 및 보안 → **손쉬운 사용** 권한이 필요해요. "System Events 제어" 허용 창이 뜨면 허용하세요. `talaria-bridge check`로 확인할 수 있어요.
+- **조건:** 봇 계정(`talaria`)이 **화면에 떠 있는 로그인 세션**이어야 하고 화면이 잠겨 있으면 안 돼요. 빠른 사용자 전환으로 백그라운드에 있는 세션에서는 동작하지 않아요.
+- **영향:** 사람이 같이 쓰는 Mac에서는 쓰지 마세요. 동작하는 순간 Messages가 앞으로 나오고 키보드 입력이 그쪽으로 가요.
+- **안전장치:**
+  - 세 가지를 확인한 뒤에만 글자를 입력하거나 지워요.
+    - Messages가 맨 앞에 떠 있는지
+    - 커서가 입력창(AXTextArea)에 있는지
+    - 입력창이 비어 있거나 자기가 넣은 `.`만 있는지
+  - Return 키는 누르지 않아요.
+  - Hermes 요청이 10초 동안 오지 않으면 스스로 지워요.
+- **직접 확인:** 아래 명령으로 8초 동안 아이폰에 `…`가 뜨는지 확인할 수 있어요.
+  ```bash
+  talaria-bridge typing --to +821012345678 --seconds 8
+  ```
+
+화면 구조에 의존하는 방식이라 macOS 업데이트로 동작하지 않게 될 수 있어요. 안 되면 `TALARIA_TYPING=off`로 끄면 돼요. 메시지를 주고받는 기능은 영향을 받지 않아요.
+
 ## HTTP API
 
 | 요청 | 응답 |
 |---|---|
-| `GET /health` | `{"ok": true, "cursor": N, "version": "0.2.0"}` |
+| `GET /health` | `{"ok": true, "cursor": N, "version": "0.3.0", "typing": "off"/"ui"}` |
 | `GET /events?after=<id>&timeout=<초>` | `{"events": [...], "cursor": N}`. 새 메시지가 올 때까지 최대 55초 기다려요(롱 폴링). 다음 요청에는 `after=<cursor>`를 넣어요 |
 | `POST /send` `{"text", "chat_guid"?, "to"?}` | `{"ok": true}`. 허용 목록에 없는 상대면 403, Messages 전송이 실패하면 502를 돌려줘요 |
+| `POST /typing` `{"chat_guid"?, "to"?, "active"?}` | `{"ok": true, "enabled": true/false}`. `active: true`는 입력 중 표시를 10초 연장하고, `false`는 바로 꺼요. `TALARIA_TYPING=off`면 아무것도 하지 않고 `enabled: false`를 돌려줘요 |
 
 모든 요청에 `Authorization: Bearer <TALARIA_TOKEN>` 헤더가 필요해요. 이벤트 하나에는 `rowid`, `guid`, `sender`, `text`, `chat_guid`, `chat_identifier`, `is_group`, `timestamp`, `service`, `attachments[{path, mime_type, name}]`가 들어 있어요.
 
@@ -92,6 +117,7 @@ scripts/install.sh            # 결과물: /Users/Shared/talaria/bin/talaria-bri
 | `TALARIA_HOST` / `TALARIA_PORT` | `127.0.0.1` / `8790` | 접속을 받을 주소와 포트 |
 | `TALARIA_MAX_AGE_SECONDS` | `600` | 이보다 오래된 메시지는 무시해요(`0`이면 제한 없음) |
 | `TALARIA_POLL_INTERVAL` | `1` | chat.db를 확인하는 간격(초) |
+| `TALARIA_TYPING` | `off` | `ui`로 바꾸면 입력 중 표시를 켜요(위 "입력 중 표시" 참고) |
 | `TALARIA_DB_PATH` / `TALARIA_STATE_PATH` | Messages 기본 경로 / `~/Library/Application Support/Talaria/state.json` | chat.db 위치와 진행 상태 파일 위치 |
 
 ## 개발

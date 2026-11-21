@@ -2,9 +2,10 @@ import Foundation
 
 /// The HTTP API the Hermes plugin talks to.
 ///
-///     GET  /health                         -> {"ok": true, "cursor": N, "version": "..."}
+///     GET  /health                         -> {"ok": true, "cursor": N, "version": "...", "typing": "off"|"ui"}
 ///     GET  /events?after=<id>&timeout=<s>  -> {"events": [...], "cursor": N}  (long poll)
 ///     POST /send {"text", "chat_guid"?, "to"?} -> {"ok": true}
+///     POST /typing {"chat_guid"?, "to"?, "active"?} -> {"ok": true, "enabled": Bool}
 ///
 /// Every request needs `Authorization: Bearer <TALARIA_TOKEN>`. Messages are only
 /// accepted from, and only sent to, handles in the allowlist.
@@ -20,14 +21,17 @@ public struct BridgeAPI: Sendable {
     public let policy: AccessPolicy
     /// Finds the existing 1:1 chat for a handle when /send only names `to`.
     private let chatLookup: ChatLookupFunction?
+    /// nil when TALARIA_TYPING is off: /typing then answers `enabled: false`.
+    private let typing: TypingController?
     private let expectedAuthorization: [UInt8]
 
     public init(hub: EventHub, sender: any MessageSending, policy: AccessPolicy, token: String,
-                chatLookup: ChatLookupFunction? = nil) {
+                chatLookup: ChatLookupFunction? = nil, typing: TypingController? = nil) {
         self.hub = hub
         self.sender = sender
         self.policy = policy
         self.chatLookup = chatLookup
+        self.typing = typing
         self.expectedAuthorization = Array("Bearer \(token)".utf8)
     }
 
@@ -40,11 +44,14 @@ public struct BridgeAPI: Sendable {
         }
         switch (request.method, request.path) {
         case ("GET", "/health"):
-            return .json(200, ["ok": true, "cursor": await hub.cursor, "version": bridgeVersion])
+            return .json(200, ["ok": true, "cursor": await hub.cursor, "version": bridgeVersion,
+                               "typing": (typing == nil ? TypingMode.off : .ui).rawValue])
         case ("GET", "/events"):
             return await events(request.query)
         case ("POST", "/send"):
             return await send(request.body)
+        case ("POST", "/typing"):
+            return await typingRequest(request.body)
         default:
             return .json(404, ["error": "not found"])
         }
@@ -92,15 +99,53 @@ public struct BridgeAPI: Sendable {
         return .json(200, encoding: EventsBody(events: events, cursor: cursor))
     }
 
-    private func send(_ data: Data) async -> HTTPResponse {
+    private func parseBody(_ data: Data) -> Result<[String: Any], HTTPResponseError> {
         let parsed: Any
         do {
             parsed = try JSONSerialization.jsonObject(with: data.isEmpty ? Data("{}".utf8) : data)
         } catch {
-            return .json(400, ["error": "body must be JSON"])
+            return .failure(HTTPResponseError(.json(400, ["error": "body must be JSON"])))
         }
         guard let body = parsed as? [String: Any] else {
-            return .json(400, ["error": "body must be a JSON object"])
+            return .failure(HTTPResponseError(.json(400, ["error": "body must be a JSON object"])))
+        }
+        return .success(body)
+    }
+
+    private func typingRequest(_ data: Data) async -> HTTPResponse {
+        let body: [String: Any]
+        switch parseBody(data) {
+        case .success(let parsed): body = parsed
+        case .failure(let error): return error.response
+        }
+        let active: Bool
+        switch body["active"] {
+        case nil, is NSNull: active = true
+        case let value as Bool: active = value
+        default: return .json(400, ["error": "active must be true or false"])
+        }
+        let handle: String
+        switch resolveTarget(body) {
+        case .success(let target): handle = target.1
+        case .failure(.badRequest(let reason)): return .json(400, ["error": reason])
+        case .failure(.forbidden(let reason)): return .json(403, ["error": reason])
+        }
+        guard let typing else {
+            return .json(200, ["ok": true, "enabled": false])
+        }
+        if active {
+            await typing.request(handle: handle)
+        } else {
+            await typing.cancel(handle: handle)
+        }
+        return .json(200, ["ok": true, "enabled": true])
+    }
+
+    private func send(_ data: Data) async -> HTTPResponse {
+        let body: [String: Any]
+        switch parseBody(data) {
+        case .success(let parsed): body = parsed
+        case .failure(let error): return error.response
         }
         guard let text = body["text"] as? String,
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -122,6 +167,8 @@ public struct BridgeAPI: Sendable {
             return .json(403, ["error": reason])
         }
 
+        // Take the typing placeholder out first, so it isn't left behind the reply.
+        await typing?.clearNow()
         do {
             try await sender.sendText(text, chatGUID: chatGUID, handle: handle)
         } catch {
@@ -173,6 +220,11 @@ public struct BridgeAPI: Sendable {
         }
         return .success((chatGUID, handle))
     }
+}
+
+struct HTTPResponseError: Error {
+    let response: HTTPResponse
+    init(_ response: HTTPResponse) { self.response = response }
 }
 
 private struct EventsBody: Encodable {

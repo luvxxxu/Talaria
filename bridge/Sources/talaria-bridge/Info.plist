@@ -7,8 +7,8 @@
 	<key>CFBundleName</key>
 	<string>talaria-bridge</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.2.0</string>
+	<string>0.3.0</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Talaria sends your Hermes agent's replies through Messages.</string>
+	<string>Talaria sends your Hermes agent's replies through Messages and can show a typing indicator.</string>
 </dict>
 </plist>

@@ -2,9 +2,10 @@
 
 The bridge (``talaria-bridge serve`` on the Mac signed in to Messages) exposes
 
-    GET  /health                          -> {"ok", "cursor", "version"}
+    GET  /health                          -> {"ok", "cursor", "version", "typing"}
     GET  /events?after=<id>&timeout=<s>   -> {"events": [...], "cursor": N}   (long poll)
     POST /send {"text", "chat_guid" | "to"} -> {"ok": true}
+    POST /typing {"chat_guid" | "to", "active"} -> {"ok": true, "enabled": bool}
 
 and checks ``Authorization: Bearer <token>`` on every request. This adapter
 long-polls ``/events``, hands each message to the gateway, and posts replies to
@@ -74,6 +75,8 @@ ENV_MAX_AGE = "TALARIA_MAX_AGE_SECONDS"
 
 POLL_WAIT = 25  # seconds the bridge holds each long poll open
 REQUEST_TIMEOUT = httpx.Timeout(10.0, read=POLL_WAIT + 15)
+# Hermes gives each send_typing about 1.5s; the bridge answers /typing at once.
+TYPING_TIMEOUT = httpx.Timeout(1.0)
 MAX_CHUNK = 4000  # characters per iMessage bubble before splitting
 BACKOFF_START = 1.0
 BACKOFF_MAX = 60.0
@@ -184,13 +187,14 @@ def _error_detail(response: httpx.Response) -> str:
     return response.text[:200] or response.reason_phrase
 
 
+def _target(chat_id: str) -> dict[str, str]:
+    """``chat_id`` is a 1:1 chat GUID (``any;-;+82…``) or a bare handle."""
+    return {"chat_guid": chat_id} if DIRECT_CHAT_SEPARATOR in chat_id else {"to": chat_id}
+
+
 async def _post_send(client: httpx.AsyncClient, chat_id: str, text: str) -> SendResult:
-    """POST one bubble to the bridge. ``chat_id`` is a 1:1 chat GUID or a handle."""
-    body: dict[str, Any] = {"text": text}
-    if DIRECT_CHAT_SEPARATOR in chat_id:
-        body["chat_guid"] = chat_id
-    else:
-        body["to"] = chat_id
+    """POST one bubble to the bridge."""
+    body: dict[str, Any] = {"text": text, **_target(chat_id)}
     try:
         response = await client.post("/send", json=body)
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
@@ -248,6 +252,8 @@ class TalariaAdapter(BasePlatformAdapter):
         self._polling = False
         self._cursor = 0
         self._seen = MessageDeduplicator(ttl_seconds=3600) if MessageDeduplicator else _SeenIDs()
+        # Whether the bridge shows typing (TALARIA_TYPING=ui on the Mac); read from /health.
+        self._typing_enabled = False
 
     @property
     def name(self) -> str:
@@ -272,6 +278,7 @@ class TalariaAdapter(BasePlatformAdapter):
             logger.error("Talaria: cannot reach the bridge at %s: %s", self.bridge_url, exc)
             return self._fail("connect_failed", f"cannot reach the bridge at {self.bridge_url}: {exc}", retryable=True)
 
+        self._read_typing_mode(health)
         bridge_cursor = int(health.get("cursor") or 0)
         stored = self._load_cursor()
         # Resume where we stopped so messages sent while Hermes restarted still arrive
@@ -280,9 +287,14 @@ class TalariaAdapter(BasePlatformAdapter):
         self._polling = True
         self._mark_connected()
         self._poll_task = asyncio.create_task(self._poll_loop(), name="talaria-poll")
-        logger.info("Talaria: connected to bridge %s (version %s, cursor %d)",
-                    self.bridge_url, health.get("version", "?"), self._cursor)
+        logger.info("Talaria: connected to bridge %s (version %s, cursor %d, typing %s)",
+                    self.bridge_url, health.get("version", "?"), self._cursor,
+                    "on" if self._typing_enabled else "off")
         return True
+
+    def _read_typing_mode(self, health: dict) -> None:
+        # Older bridges don't report "typing" and have no /typing endpoint.
+        self._typing_enabled = str(health.get("typing") or "off") != "off"
 
     async def disconnect(self) -> None:
         self._polling = False
@@ -330,6 +342,9 @@ class TalariaAdapter(BasePlatformAdapter):
             if failing:
                 logger.info("Talaria: bridge reachable again")
                 failing = False
+                # The bridge may have restarted with a different TALARIA_TYPING.
+                with contextlib.suppress(Exception):
+                    self._read_typing_mode(await _get_json(self._http, "/health"))
             delay = BACKOFF_START
 
             for item in data.get("events") or []:
@@ -430,7 +445,27 @@ class TalariaAdapter(BasePlatformAdapter):
         return result
 
     async def send_typing(self, chat_id: str, metadata: Any = None) -> None:
-        """Messages offers no public way to show a typing indicator."""
+        """Hermes calls this every ~2s while the agent works; each call extends the bridge's lease."""
+        await self._post_typing(chat_id, active=True)
+
+    async def stop_typing(self, chat_id: str, metadata: Any = None) -> None:
+        await self._post_typing(chat_id, active=False)
+
+    async def _post_typing(self, chat_id: str, *, active: bool) -> None:
+        if not self._typing_enabled or self._http is None:
+            return
+        try:
+            response = await self._http.post("/typing", json={**_target(chat_id), "active": active},
+                                             timeout=TYPING_TIMEOUT)
+        except httpx.HTTPError as exc:
+            logger.debug("Talaria: typing request failed: %s", exc)
+            return
+        if response.status_code == 404:
+            self._typing_enabled = False  # bridge without /typing
+            return
+        with contextlib.suppress(ValueError):
+            if response.status_code == 200 and response.json().get("enabled") is False:
+                self._typing_enabled = False
 
     async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
         handle = chat_id.rsplit(DIRECT_CHAT_SEPARATOR, 1)[-1]
